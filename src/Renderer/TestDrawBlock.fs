@@ -343,13 +343,22 @@ module HLPTick3 =
         let failOnAllTests (sample: int) _ =
             Some <| $"Sample {sample}"
 
+        let printBoundingBox (bbox : BoundingBox) = 
+            $"({bbox.TopLeft.X},{bbox.TopLeft.Y}) W: {bbox.W}, H:{bbox.H}"
+
         /// Fail when sheet contains a wire segment that overlaps (or goes too close to) a symbol outline  
         let failOnWireIntersectsSymbol (sample: int) (sheet: SheetT.Model) =
             let wireModel = sheet.Wire
             wireModel.Wires
-            |> Map.exists (fun _ wire -> BusWireRoute.findWireSymbolIntersections wireModel wire <> [])
-            |> (function | true -> Some $"Wire intersects a symbol outline in Sample {sample}"
-                         | false -> None)
+            |> Map.toList
+            |> List.map (fun (_, wire) -> BusWireRoute.findWireSymbolIntersections wireModel wire)
+            |> List.tryFind (fun bboxL -> bboxL <> [])
+            |> (function | Some bboxL -> 
+                            Some <| $"Wire intersects a symbol outline in Sample {sample}. Bounding Box positions:" + (List.fold 
+                                                                                                                            (fun string (bbox : BoundingBox) 
+                                                                                                                                -> string + " " + printBoundingBox bbox) 
+                                                                                                                            "" bboxL)
+                         | None -> None)
 
         /// Fail when sheet contains two symbols which overlap
         let failOnSymbolIntersectsSymbol (sample: int) (sheet: SheetT.Model) =
@@ -442,7 +451,7 @@ module HLPTick3 =
                 firstSample
                 horizLinePositions
                 makeTest1Circuit
-                (Asserts.failOnSampleNumber 10)
+                (Asserts.failOnSampleNumber 12)
                 dispatch
             |> recordPositionInTest testNum dispatch
 
@@ -472,7 +481,7 @@ module HLPTick3 =
             runTestOnSheets
                 "AND + DFF positioned around a grid: failing on Wire intersecting Symbol"
                 firstSample
-                (gridPositions 400 10 makeTest1Circuit)
+                (gridPositions 200 10 makeTest1Circuit)
                 makeTest1Circuit
                 Asserts.failOnWireIntersectsSymbol
                 dispatch
