@@ -259,8 +259,8 @@ module HLPTick3 =
 
 
         // Flip a symbol
-        let flipSymbol (symLabel: string) (flip: SymbolT.FlipType) (model: SheetT.Model) : (SheetT.Model) =
-            let SymbolsMap = model.Wire.Symbol.Symbols
+        let flipSymbol (symLabel: string) (orientation: SymbolT.FlipType) (sheet: SheetT.Model) : (SheetT.Model) =
+            let SymbolsMap = sheet.Wire.Symbol.Symbols
             
             let findSymbol = 
                 SymbolsMap
@@ -271,16 +271,16 @@ module HLPTick3 =
                 findSymbol
                 |> Option.bind (fun (id, sym) 
                                     -> 
-                                    let pos = {X = sym.Component.X + sym.Component.W / 2.0 ; Y = sym.Component.Y + sym.Component.H / 2.0 }                                    
-                                    Some (id, RotateScale.flipSymbolInBlock flip pos sym))
+                                    // let pos = {X = sym.Component.X + sym.Component.W / 2.0 ; Y = sym.Component.Y + sym.Component.H / 2.0 }                                    
+                                    // Some (id, RotateScale.flipSymbolInBlock flip pos sym))
+                                    Some (id, RotateScale.flipBlock [id] sheet.Wire.Symbol orientation))
             
 
             match rotatedSymbol with
-            | None -> model
-            | Some (id, updatedSym) -> 
-                let updatedSymbolsMap = Map.add id updatedSym SymbolsMap
+            | None -> sheet
+            | Some (id, updatedSymModel) -> 
                 // {model with Wire = {model.Wire with Symbol = {model.Wire.Symbol with Symbols = updatedSymbolsMap}}} LOL
-                Optic.set SheetT.symbols_ updatedSymbolsMap model
+                Optic.set SheetT.symbol_ updatedSymModel sheet
 
         /// Add a (newly routed) wire, source specifies the Output port, target the Input port.
         /// Return an error if either of the two ports specified is invalid, or if the wire duplicates and existing one.
@@ -428,14 +428,32 @@ module HLPTick3 =
         |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
         |> getOkOrFail
 
-    type SymbolPosOrient = {pos:XYPos; flip:SymbolT.FlipType;rotate : Rotation}
+    type SymbolPosOrient = {pos:XYPos; flip:SymbolT.FlipType option;rotate : Rotation}
 
     let placeAndOrientSymbol label compType (posOrient:SymbolPosOrient) =
         placeSymbol label compType posOrient.pos
-        >> Result.bind (fun model -> Ok <| flipSymbol label posOrient.flip model) 
+        >> Result.bind (fun model ->
+                            match posOrient.flip with
+                            | None -> Ok model
+                            | Some flip -> Ok <| flipSymbol label flip model) 
         >> Result.bind (fun model -> Ok <| rotateSymbol label posOrient.rotate model)
 
-    // let makeTest6Circuit (andPos : XYPos, flip : SymbolT.FlipType, rotation : Rotation) =
+    let highlightIntersectingWires (sheet : SheetT.Model) = 
+        let wireModel = sheet.Wire
+        wireModel.Wires
+        |> Map.toList
+        |> List.filter (fun (_, wire) -> BusWireRoute.findWireSymbolIntersections wireModel wire <> [])
+        |> function
+        | [] -> sheet
+        | intersectingWires -> 
+            let colouredWireMap = 
+                intersectingWires
+                |> List.map (fun (id,wire: BusWireT.Wire) -> (id, {wire with Color = Red}))
+                |> List.fold (fun wireMap (id, wire) -> Map.add id wire wireMap) wireModel.Wires
+            
+            sheet 
+            |> Optic.set DrawModelType.SheetT.wires_ colouredWireMap
+
     let makeTest6Circuit (andPos:SymbolPosOrient,dffPos:SymbolPosOrient) =
         initSheetModel
         |> placeAndOrientSymbol "G1" (GateN(And,2)) andPos
@@ -443,28 +461,29 @@ module HLPTick3 =
         |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0))
         |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
         |> getOkOrFail
+        |> highlightIntersectingWires
 
     let getProductPos x y = 
         (x,y)
         ||> product (fun x y -> middleOfSheet + {X = float x; Y = float y})
         
 
-    let generateAndFilterPositions generateCircuit positions  = 
+    let generateAndFilterPositions (generateCircuit : 'a -> SheetT.Model) (assertFilter :  SheetT.Model -> option<string>) (positions : Gen<'a>)  = 
         positions
         |> filter (fun candidatePos ->
                             candidatePos
                             |> generateCircuit
-                            |> Asserts.failOnSymbolIntersectsSymbol 0
+                            |> assertFilter
                             |> function
                             | None -> true
                             | Some _ -> false)
 
     /// Generate Sample data around a grid and filter positions which cause symbol conflicts
-    let regularGridPositions gridSize gridStep generateCircuit = 
+    let regularGridPositions gridSize gridStep generateCircuit filter = 
         (fromList [-(gridSize/2)..gridStep..(gridSize/2)]
         ,fromList [-(gridSize/2)..gridStep..(gridSize/2)])
         ||> getProductPos
-        |> generateAndFilterPositions generateCircuit 
+        |> generateAndFilterPositions generateCircuit filter
         
     let getNRandNums minVal maxVal n = 
         [1..n]
@@ -472,19 +491,19 @@ module HLPTick3 =
         |> fromList
     
     /// Random Sample data generator
-    let randomGridPositions minVal maxVal num generateCircuit = 
+    let randomGridPositions minVal maxVal num generateCircuit filter = 
 
         (getNRandNums minVal maxVal num, getNRandNums minVal maxVal num) 
         ||> getProductPos
-        |> generateAndFilterPositions generateCircuit 
+        |> generateAndFilterPositions generateCircuit filter
 
 
     /// Random Position, Rotate and Flip
     let randomGridPosAndOrientation numTestCases = 
-        let getRandomFlip: SymbolT.FlipType = 
+        let getRandomFlip = 
             match random.Next(0,2) with
-            | 0 -> SymbolT.FlipHorizontal
-            | 1 -> SymbolT.FlipVertical
+            | 0 -> Some SymbolT.FlipHorizontal
+            | 1 -> None
             | _ -> failwithf "Should not reach this condition"
 
         let getRandomRotation = 
@@ -495,8 +514,8 @@ module HLPTick3 =
             | 3 -> Degree270
             | _ -> failwithf "Should not reach this condition"
 
-        let maxVal = 200
-        let minVal = -200
+        let maxVal = 400
+        let minVal = -400
         let numberGenSize =  float numTestCases |> sqrt |> int
 
         (getNRandNums minVal maxVal numberGenSize, getNRandNums minVal maxVal numberGenSize) 
@@ -504,8 +523,8 @@ module HLPTick3 =
         |> toList
         |> List.map (fun pos -> {pos=pos;flip= getRandomFlip;rotate= getRandomRotation})
     
-    let generateTest6Sheets = 
-        let numTestCases = 100
+    let generateRandomPosOrientPairs numTestCases circuitGenerator assertFilter = 
+        let numTestCases = numTestCases // very strange variable bounding behaviour
 
         let andPositions = randomGridPosAndOrientation numTestCases
         let dffPositions = randomGridPosAndOrientation numTestCases
@@ -513,12 +532,11 @@ module HLPTick3 =
 
         (andPositions, dffPositions)
         ||> List.zip
-        |> List.map makeTest6Circuit
         |> fromList
         |> filter (fun candidateSheet ->
                             candidateSheet
-                            // |> generateCircuit
-                            |> Asserts.failOnSymbolIntersectsSymbol 0
+                            |> circuitGenerator
+                            |> assertFilter
                             |> function
                             | None -> true
                             | Some _ -> false)
@@ -592,7 +610,7 @@ module HLPTick3 =
             runTestOnSheets
                 "AND + DFF regularly positioned around a grid: failing on Wire intersecting Symbol"
                 firstSample
-                (regularGridPositions 200 10 makeTest1Circuit)
+                (regularGridPositions 200 10 makeTest1Circuit (Asserts.failOnSymbolIntersectsSymbol 0))
                 makeTest1Circuit
                 Asserts.failOnWireIntersectsSymbol
                 dispatch
@@ -602,7 +620,7 @@ module HLPTick3 =
             runTestOnSheets
                 "AND + DFF randomly positioned around a grid: failing on Wire intersecting Symbol"
                 firstSample
-                (randomGridPositions -100 100 30 makeTest1Circuit)
+                (randomGridPositions -100 100 30 makeTest1Circuit (Asserts.failOnSymbolIntersectsSymbol 0))
                 makeTest1Circuit
                 Asserts.failOnWireIntersectsSymbol
                 dispatch
@@ -612,8 +630,8 @@ module HLPTick3 =
             runTestOnSheets
                 "AND + DFF randomly positioned and flipped around a grid: failing on Wire intersecting Symbol"
                 firstSample
-                generateTest6Sheets
-                (fun sheet -> sheet)
+                (generateRandomPosOrientPairs 400 makeTest6Circuit (Asserts.failOnSymbolIntersectsSymbol 0))
+                makeTest6Circuit
                 Asserts.failOnWireIntersectsSymbol
                 dispatch
             |> recordPositionInTest testNum dispatch
