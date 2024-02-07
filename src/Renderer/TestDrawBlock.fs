@@ -429,18 +429,24 @@ module HLPTick3 =
         |> getOkOrFail
 
     // let makeTest6Circuit (andPos : XYPos, flip : SymbolT.FlipType, rotation : Rotation) =
-    let makeTest6Circuit (andPos : XYPos) =
+    let makeTest6Circuit (andPos : XYPos, flip : SymbolT.FlipType, rotate : Rotation) =
+        let andGateLabel = "G1"
         initSheetModel
-        |> placeSymbol "G1" (GateN(And,2)) andPos
-        |> Result.bind (fun model -> Ok <| flipSymbol "G1" DrawModelType.SymbolT.FlipHorizontal model) 
+        |> placeSymbol andGateLabel (GateN(And,2)) andPos
+        |> Result.bind (fun model -> Ok <| flipSymbol andGateLabel flip model) 
+        |> Result.bind (fun model -> Ok <| rotateSymbol andGateLabel rotate model) 
         |> Result.bind (placeSymbol "FF1" DFF middleOfSheet)
         |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0))
         |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
         |> getOkOrFail
 
-    let generateAndFilterPositions generateCircuit x y  = 
+    let getProductPos x y = 
         (x,y)
         ||> product (fun x y -> middleOfSheet + {X = float x; Y = float y})
+        
+
+    let generateAndFilterPositions generateCircuit positions  = 
+        positions
         |> filter (fun candidatePos ->
                             candidatePos
                             |> generateCircuit
@@ -453,19 +459,54 @@ module HLPTick3 =
     let regularGridPositions gridSize gridStep generateCircuit = 
         (fromList [-(gridSize/2)..gridStep..(gridSize/2)]
         ,fromList [-(gridSize/2)..gridStep..(gridSize/2)])
-        ||> generateAndFilterPositions generateCircuit 
+        ||> getProductPos
+        |> generateAndFilterPositions generateCircuit 
         
+    let getNRandNums minVal maxVal n = 
+        [1..n]
+        |> List.map (fun _ -> int <| random.Next(minValue=minVal, maxValue=maxVal))
+        |> fromList
     
     /// Random Sample data generator
     let randomGridPositions minVal maxVal num generateCircuit = 
 
-        let getNRandNums n = 
-            [1..n]
-            |> List.map (fun _ -> int <| random.Next(minValue=minVal, maxValue=maxVal))
-            |> fromList
+        (getNRandNums minVal maxVal num, getNRandNums minVal maxVal num) 
+        ||> getProductPos
+        |> generateAndFilterPositions generateCircuit 
 
-        (getNRandNums num, getNRandNums num) 
-        ||> generateAndFilterPositions generateCircuit 
+
+    /// Random Position, Rotate and Flip
+    let inline randomGridPosAndOrientation generateCircuit = 
+        let getRandomFlip = 
+            match random.Next(0,2) with
+            | 0 -> SymbolT.FlipHorizontal
+            | 1 -> SymbolT.FlipVertical
+            | _ -> failwithf "Should not reach this condition"
+
+        let getRandomRotation = 
+            match random.Next(0,4) with
+            | 0 -> Degree0
+            | 1 -> Degree90
+            | 2 -> Degree180
+            | 3 -> Degree270
+            | _ -> failwithf "Should not reach this condition"
+
+        let maxVal = 200
+        let minVal = -200
+        let nTestCases = 10
+
+        (getNRandNums minVal maxVal nTestCases, getNRandNums minVal maxVal nTestCases) 
+        ||> getProductPos
+        |> toList
+        |> List.map (fun pos -> (pos, getRandomFlip, getRandomRotation))
+        |> fromList
+        |> filter (fun candidatePos ->
+                            candidatePos
+                            |> generateCircuit
+                            |> Asserts.failOnSymbolIntersectsSymbol 0
+                            |> function
+                            | None -> true
+                            | Some _ -> false)
 
 
 //---------------------------------------------------------------------------------------//
@@ -552,9 +593,9 @@ module HLPTick3 =
 
         let test7 testNum firstSample dispatch = 
             runTestOnSheets
-                "AND + DFF randomly positioned around a grid: failing on Wire intersecting Symbol"
+                "AND + DFF randomly positioned and flipped around a grid: failing on Wire intersecting Symbol"
                 firstSample
-                horizLinePositions
+                (randomGridPosAndOrientation makeTest6Circuit)
                 makeTest6Circuit
                 Asserts.failOnAllTests
                 dispatch
