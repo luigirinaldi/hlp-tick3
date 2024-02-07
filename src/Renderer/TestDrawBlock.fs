@@ -439,7 +439,7 @@ module HLPTick3 =
         >> Result.bind (fun model -> Ok <| rotateSymbol label posOrient.rotate model)
 
     let highlightIntersectingWires (sheet : SheetT.Model) = 
-        let wireModel = sheet.Wire
+        let wireModel = Optic.get SheetT.wire_ sheet
         wireModel.Wires
         |> Map.toList
         |> List.filter (fun (_, wire) -> BusWireRoute.findWireSymbolIntersections wireModel wire <> [])
@@ -500,18 +500,18 @@ module HLPTick3 =
 
     /// Random Position, Rotate and Flip
     let randomGridPosAndOrientation numTestCases = 
-        let getRandomFlip = 
+        let getRandomFlip _ = 
             match random.Next(0,2) with
-            | 0 -> Some SymbolT.FlipHorizontal
-            | 1 -> None
+            | 0 -> (Some SymbolT.FlipHorizontal, "flip")
+            | 1 -> (None, "noflip")
             | _ -> failwithf "Should not reach this condition"
 
-        let getRandomRotation = 
+        let getRandomRotation _ = 
             match random.Next(0,4) with
-            | 0 -> Degree0
-            | 1 -> Degree90
-            | 2 -> Degree180
-            | 3 -> Degree270
+            | 0 -> (Degree0, "0")
+            | 1 -> (Degree90, "90")
+            | 2 -> (Degree180, "180")
+            | 3 -> (Degree270, "270")
             | _ -> failwithf "Should not reach this condition"
 
         let maxVal = 400
@@ -521,7 +521,11 @@ module HLPTick3 =
         (getNRandNums minVal maxVal numberGenSize, getNRandNums minVal maxVal numberGenSize) 
         ||> getProductPos
         |> toList
-        |> List.map (fun pos -> {pos=pos;flip= getRandomFlip;rotate= getRandomRotation})
+        |> List.map (fun pos -> 
+                        let randFlip, flipStr = getRandomFlip ""
+                        let randRot, rotStr = getRandomRotation ""
+                        // printfn $"Pos:({pos.X},{pos.Y}) f: {flipStr} r: {rotStr}";
+                        {pos=pos;flip= randFlip;rotate= randRot})
     
     let generateRandomPosOrientPairs numTestCases circuitGenerator assertFilter = 
         let numTestCases = numTestCases // very strange variable bounding behaviour
