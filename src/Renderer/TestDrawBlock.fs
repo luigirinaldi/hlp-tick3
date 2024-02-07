@@ -237,11 +237,50 @@ module HLPTick3 =
 
         // Rotate a symbol
         let rotateSymbol (symLabel: string) (rotate: Rotation) (model: SheetT.Model) : (SheetT.Model) =
-            failwithf "Not Implemented"
+            let SymbolsMap = model.Wire.Symbol.Symbols
+            
+            let findSymbol = 
+                SymbolsMap
+                |> Map.toList
+                |> List.tryFind (fun (id, sym) -> sym.Component.Label = symLabel)
+             
+            let rotatedSymbol = 
+                findSymbol
+                |> Option.bind (fun (id, sym) 
+                                    -> Some (id, RotateScale.rotateSymbolByDegree rotate sym))
+            
+
+            match rotatedSymbol with
+            | None -> model
+            | Some (id, updatedSym) -> 
+                let updatedSymbolsMap = Map.add id updatedSym SymbolsMap
+                // {model with Wire = {model.Wire with Symbol = {model.Wire.Symbol with Symbols = updatedSymbolsMap}}} LOL
+                Optic.set SheetT.symbols_ updatedSymbolsMap model
+
 
         // Flip a symbol
         let flipSymbol (symLabel: string) (flip: SymbolT.FlipType) (model: SheetT.Model) : (SheetT.Model) =
-            failwithf "Not Implemented"
+            let SymbolsMap = model.Wire.Symbol.Symbols
+            
+            let findSymbol = 
+                SymbolsMap
+                |> Map.toList
+                |> List.tryFind (fun (id, sym) -> sym.Component.Label = symLabel)
+             
+            let rotatedSymbol = 
+                findSymbol
+                |> Option.bind (fun (id, sym) 
+                                    -> 
+                                    let pos = {X = sym.Component.X + sym.Component.W / 2.0 ; Y = sym.Component.Y + sym.Component.H / 2.0 }                                    
+                                    Some (id, RotateScale.flipSymbolInBlock flip pos sym))
+            
+
+            match rotatedSymbol with
+            | None -> model
+            | Some (id, updatedSym) -> 
+                let updatedSymbolsMap = Map.add id updatedSym SymbolsMap
+                // {model with Wire = {model.Wire with Symbol = {model.Wire.Symbol with Symbols = updatedSymbolsMap}}} LOL
+                Optic.set SheetT.symbols_ updatedSymbolsMap model
 
         /// Add a (newly routed) wire, source specifies the Output port, target the Input port.
         /// Return an error if either of the two ports specified is invalid, or if the wire duplicates and existing one.
@@ -389,6 +428,16 @@ module HLPTick3 =
         |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
         |> getOkOrFail
 
+    // let makeTest6Circuit (andPos : XYPos, flip : SymbolT.FlipType, rotation : Rotation) =
+    let makeTest6Circuit (andPos : XYPos) =
+        initSheetModel
+        |> placeSymbol "G1" (GateN(And,2)) andPos
+        |> Result.bind (fun model -> Ok <| flipSymbol "G1" DrawModelType.SymbolT.FlipHorizontal model) 
+        |> Result.bind (placeSymbol "FF1" DFF middleOfSheet)
+        |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0))
+        |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
+        |> getOkOrFail
+
     let generateAndFilterPositions generateCircuit x y  = 
         (x,y)
         ||> product (fun x y -> middleOfSheet + {X = float x; Y = float y})
@@ -417,7 +466,6 @@ module HLPTick3 =
 
         (getNRandNums num, getNRandNums num) 
         ||> generateAndFilterPositions generateCircuit 
-
 
 
 //---------------------------------------------------------------------------------------//
@@ -502,6 +550,17 @@ module HLPTick3 =
                 dispatch
             |> recordPositionInTest testNum dispatch
 
+        let test7 testNum firstSample dispatch = 
+            runTestOnSheets
+                "AND + DFF randomly positioned around a grid: failing on Wire intersecting Symbol"
+                firstSample
+                horizLinePositions
+                makeTest6Circuit
+                Asserts.failOnAllTests
+                dispatch
+            |> recordPositionInTest testNum dispatch
+
+
 
         /// List of tests available which can be run ftom Issie File Menu.
         /// The first 9 tests can also be run via Ctrl-n accelerator keys as shown on menu
@@ -515,7 +574,7 @@ module HLPTick3 =
                 "Test4", test4 
                 "Test5", test5
                 "Test6", test6
-                "Test7", fun _ _ _ -> printf "Test7"
+                "Test7", test7
                 "Test8", fun _ _ _ -> printf "Test8"
                 "Next Test Error", fun _ _ _ -> printf "Next Error:" // Go to the nexterror in a test
 
