@@ -428,14 +428,18 @@ module HLPTick3 =
         |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
         |> getOkOrFail
 
+    type SymbolPosOrient = {pos:XYPos; flip:SymbolT.FlipType;rotate : Rotation}
+
+    let placeAndOrientSymbol label compType (posOrient:SymbolPosOrient) =
+        placeSymbol label compType posOrient.pos
+        >> Result.bind (fun model -> Ok <| flipSymbol label posOrient.flip model) 
+        >> Result.bind (fun model -> Ok <| rotateSymbol label posOrient.rotate model)
+
     // let makeTest6Circuit (andPos : XYPos, flip : SymbolT.FlipType, rotation : Rotation) =
-    let makeTest6Circuit (andPos : XYPos, flip : SymbolT.FlipType, rotate : Rotation) =
-        let andGateLabel = "G1"
+    let makeTest6Circuit (andPos:SymbolPosOrient,dffPos:SymbolPosOrient) =
         initSheetModel
-        |> placeSymbol andGateLabel (GateN(And,2)) andPos
-        |> Result.bind (fun model -> Ok <| flipSymbol andGateLabel flip model) 
-        |> Result.bind (fun model -> Ok <| rotateSymbol andGateLabel rotate model) 
-        |> Result.bind (placeSymbol "FF1" DFF middleOfSheet)
+        |> placeAndOrientSymbol "G1" (GateN(And,2)) andPos
+        |> Result.bind (placeAndOrientSymbol "FF1" DFF dffPos) 
         |> Result.bind (placeWire (portOf "G1" 0) (portOf "FF1" 0))
         |> Result.bind (placeWire (portOf "FF1" 0) (portOf "G1" 0) )
         |> getOkOrFail
@@ -476,8 +480,8 @@ module HLPTick3 =
 
 
     /// Random Position, Rotate and Flip
-    let inline randomGridPosAndOrientation generateCircuit = 
-        let getRandomFlip = 
+    let randomGridPosAndOrientation numTestCases = 
+        let getRandomFlip: SymbolT.FlipType = 
             match random.Next(0,2) with
             | 0 -> SymbolT.FlipHorizontal
             | 1 -> SymbolT.FlipVertical
@@ -493,20 +497,33 @@ module HLPTick3 =
 
         let maxVal = 200
         let minVal = -200
-        let nTestCases = 10
+        let numberGenSize =  float numTestCases |> sqrt |> int
 
-        (getNRandNums minVal maxVal nTestCases, getNRandNums minVal maxVal nTestCases) 
+        (getNRandNums minVal maxVal numberGenSize, getNRandNums minVal maxVal numberGenSize) 
         ||> getProductPos
         |> toList
-        |> List.map (fun pos -> (pos, getRandomFlip, getRandomRotation))
+        |> List.map (fun pos -> {pos=pos;flip= getRandomFlip;rotate= getRandomRotation})
+    
+    let generateTest6Sheets = 
+        let numTestCases = 100
+
+        let andPositions = randomGridPosAndOrientation numTestCases
+        let dffPositions = randomGridPosAndOrientation numTestCases
+
+
+        (andPositions, dffPositions)
+        ||> List.zip
+        |> List.map makeTest6Circuit
         |> fromList
-        |> filter (fun candidatePos ->
-                            candidatePos
-                            |> generateCircuit
+        |> filter (fun candidateSheet ->
+                            candidateSheet
+                            // |> generateCircuit
                             |> Asserts.failOnSymbolIntersectsSymbol 0
                             |> function
                             | None -> true
                             | Some _ -> false)
+
+
 
 
 //---------------------------------------------------------------------------------------//
@@ -595,9 +612,9 @@ module HLPTick3 =
             runTestOnSheets
                 "AND + DFF randomly positioned and flipped around a grid: failing on Wire intersecting Symbol"
                 firstSample
-                (randomGridPosAndOrientation makeTest6Circuit)
-                makeTest6Circuit
-                Asserts.failOnAllTests
+                generateTest6Sheets
+                (fun sheet -> sheet)
+                Asserts.failOnWireIntersectsSymbol
                 dispatch
             |> recordPositionInTest testNum dispatch
 
