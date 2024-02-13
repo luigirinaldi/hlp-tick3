@@ -485,11 +485,28 @@ let snapToNet (model: Model) (wireToRoute: Wire) : Wire =
         { wireToRoute with Segments = newSegments }
 
 
+let doubleSegments segList = 
+    segList 
+    |> List.fold (fun (i, (segL : Segment list)) (segment : Segment) -> 
+                    if i = 0 || i = segList.Length - 1 
+                    then (i+1, List.append segL [{segment with Index=i}]) 
+                    else
+                        let halfSegLength = segment.Length / 2.0
+                        let firstHalfedSegment = {{segment with Length = halfSegLength} with Index=i}
+                        let secondHalfedSegment = {{segment with Length = halfSegLength} with Index=i+1}
+
+                        (i+2, List.append segL [firstHalfedSegment; secondHalfedSegment])
+
+                    ) (0, [])
+    |> snd
+
 /// top-level function which replaces autoupdate and implements a smarter version of same
 /// it is called every time a new wire is created, so is easily tested.
 let smartAutoroute (model: Model) (wire: Wire) : Wire =
      
-    let initialWire = (autoroute model wire)
+    let autoWire = (autoroute model wire)
+    let initialWire = {autoWire with Segments = doubleSegments autoWire.Segments}
+    // let initialWire = (autoroute model wire)
     
     // Snapping to Net only if model.SnapToNet toggled to be true
     let snappedToNetWire =
